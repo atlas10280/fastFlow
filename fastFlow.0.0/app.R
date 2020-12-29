@@ -79,7 +79,7 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     #insert any useful metadata that we want to show with the plot
     clean_cytoDat$sample_rep = paste(clean_cytoDat$individual_ID,"_rep",clean_cytoDat$replicate, sep = "")
     
-    #TODO: we want to get the estimated DNA mass in here, this will be dependent upon a calculation based on the TIA control we select as our standard
+    #we get the estimated DNA mass in here, this is  a calculation based on the TIA control we select as our standard
     clean_cytoDat$DNA_mass_pg = round((2.4/clean_cytoDat[which(clean_cytoDat$sample_rep == control_ID),"Mean FL2-H"])*clean_cytoDat[,"Mean FL2-H"],3)
     
     #convert the random normal distribution to a kernel density estimate for each rep for plotting
@@ -87,6 +87,7 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     df_density_i = data.frame(x=density1$x, y=density1$y)
     #append the replicate metadata for splitting in the plot
     df_density_i$sample_rep = paste(clean_cytoDat$individual_ID[1],clean_cytoDat$replicate[1],sep = "_rep")
+    
     for (i in 2:nrow(clean_cytoDat)) {
         density_i = density(clean_cytoDat$distNorm[[i]])
         density_i = data.frame(x=density_i$x, y=density_i$y)
@@ -95,7 +96,7 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     }
     
     #TODO: can i code the sample rep info as a double by concatenating with a "."??? then I can sort the legend by this... or keep as is for readability and sort based on other value will work fine too...
-    #TODO: R doesn't like the "Events / ??L" name. We'll need to generalize this, but for now I've hard coded it, as the input data frame is still in development
+    
     
     
     if (is.na(control_ID) == F) {
@@ -118,23 +119,44 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     df_density_i$count = mta_dat4Plot$Count[match(df_density_i$sample_rep, mta_dat4Plot$sample_rep)]
     df_density_i$events_per_ul = mta_dat4Plot$events_per_ul[match(df_density_i$sample_rep, mta_dat4Plot$sample_rep)]
     df_density_i$DNA_mass_pg = mta_dat4Plot$DNA_mass_pg[match(df_density_i$sample_rep, mta_dat4Plot$sample_rep)]
-    
+    df_density_i$individual_ID = as.integer(mta_dat4Plot$individual_ID[match(df_density_i$sample_rep, mta_dat4Plot$sample_rep)])
+    df_density_i$replicate = mta_dat4Plot$replicate[match(df_density_i$sample_rep, mta_dat4Plot$sample_rep)]
+    df_density_i$sample_rep = factor(df_density_i$sample_rep, levels = unique(df_density_i[order(df_density_i$individual_ID,df_density_i$replicate),"sample_rep"]), ordered = T)
     #TODO need to reorder the levels so that they plot in numeric sequential despite being factors
     #   i.e. 2_rep1 should be before 10_rep1
     
     #plot the kernel density estimates by replicate with random colors
+    x_ax = list(title = "FL2-H")
+    y_ax = list(title = "frequency")
+    # f <- list(
+    #   family = "Courier New, monospace",
+    #   size = 18,
+    #   color = "#7f7f7f"
+    # )
+    # x_ax <- list(
+    #   title = "x Axis",
+    #   titlefont = f
+    # )
+    # y_ax <- list(
+    #   title = "y Axis",
+    #   titlefont = f
+    # )
     fig <- plot_ly(x = ~df_density_i$x, 
                    y = ~df_density_i$y, 
                    split = ~df_density_i$sample_rep,
-                   fill = 'tozeroy',
+                   # fill = 'tozeroy',
+                   fill = df_density_i$sample_rep,
+                   # fn = factor(f, levels=unique(f[order(a,b,f)]), ordered=TRUE)
                    hoverinfo = 'text',
                    text = ~paste(
                        '</br> Sample_replicate: ', df_density_i$sample_rep,
                        '</br> DNA mass (pg): ', df_density_i$DNA_mass_pg,
                        '</br> Event Count: ', df_density_i$count,
                        '</br> events/uL: ', df_density_i$events_per_ul
-                   )
-    )
+                   ),
+    ) %>% 
+        layout(xaxis = x_ax,
+               yaxis = y_ax)
     
     #return a list holding the clean data table, and the plotted input data
     cleanFlow_out = list(mta_dat4Plot, fig)
@@ -151,7 +173,9 @@ ui <- fluidPage(
             #Allow user to read in .xlsx file with data to process
             fileInput('file1', label = 'Select file', accept = c(".xlsx")),
             # #Provide a button to choose the control sample for DNA mass calculation
-            selectInput('control', label = 'Select control', "Select file above")
+            selectInput('control', label = 'Select control', "Select file above"),
+            # download processed data
+            downloadButton("downloadData", "Download")
         ),
     
     mainPanel(
@@ -184,19 +208,19 @@ server <- function(input, output, session) {
             cleanFlow_0.2(fileData,input$control)
         }
     
-        
     })
-    
+    # once an input file is present, this allows user to select the sample ID for the control, 
+    #which will then trigger calculation of the DNA mass estimate for all samples
+    #this assumes that the control is talapia, which is the standard workflow at the La Crosse FHC
     observe({
         updateSelectInput(session, "control",
                           label = "control",
-                          choices = cleaned_flow()[[1]][3] ,
-                          selected = cleaned_flow()[[1]][3][1,1])
+                          choices = cleaned_flow()[[1]][3],
+                          selected = input$control
+                          )
     })
     
-    
-
-        #database table is captured as output
+    #database table is captured as output
     output$database_out = renderRHandsontable({
         rhandsontable(cleaned_flow()[[1]]) 
     })
@@ -204,8 +228,16 @@ server <- function(input, output, session) {
     # capture density plot output
     output$ploidyPlot = renderPlotly({cleaned_flow()[[2]]})
     
-    
-        
+    # Downloadable csv of selected dataset ----
+    output$downloadData <- downloadHandler(
+        filename = function() {
+            paste("results_",gsub(".xlsx","",input$file1), ".csv", sep = "")
+        },
+        content = function(file) {
+            write.csv(cleaned_flow()[[1]], file, row.names = FALSE)
+            # (database_out, file, row.names = FALSE)
+        }
+    )
 }
 
 # Run the application 
