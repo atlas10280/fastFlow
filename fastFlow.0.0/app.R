@@ -15,6 +15,7 @@ library(ggplot2)
 library(plotly)
 library(rhandsontable)
 library(stringr)
+library(tidyverse)
 # eventually we will put the custom functions in their own file and use ">source()" to reference them, but for now I'm just putting them in-line
 cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     
@@ -125,36 +126,55 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
     #TODO need to reorder the levels so that they plot in numeric sequential despite being factors
     #   i.e. 2_rep1 should be before 10_rep1
     
+    #generate hexidecimal colors for each sample ID
+    df_density_i$rgb = "#000000"
+    colorSwatch = NULL
+    df_density_i[which(is.na(df_density_i$individual_ID)),"individual_ID"] = "TIA"
+    # i = "11_rep1"
+    i = "TIA"
+    # i = 1
+    #set all the black color for the control samples, identified with TIA beacuse we only use tilapia
+    for (i in unique(df_density_i$individual_ID)) {
+        index_matchI_rows = which(df_density_i$individual_ID == i)
+        if ("TRUE" %in% grepl("TIA",unique(df_density_i[index_matchI_rows,"sample_rep"]))) {
+            #check if there are multiple replicates for the sample 
+            n_replicates = n_distinct(df_density_i[index_matchI_rows,"sample_rep"])
+            colorSwatch = c(colorSwatch,rep("#000000",n_replicates))
+            df_density_i$rgb[index_matchI_rows] = rgb(sample(seq(0,1,1),1), sample(seq(0,1,1),1), sample(seq(0,1,1),1), maxColorValue=255)
+            next
+        }
+        
+        else{
+            #check if there are multiple replicates for the sample 
+            n_replicates = n_distinct(df_density_i[index_matchI_rows,"sample_rep"])
+            
+            #assign the color to the swatch n times, where n = the number of replicates present
+            colorValue = rgb(sample(seq(50,255,1),1), sample(seq(50,255,1),1), sample(seq(50,255,1),1), maxColorValue=255)
+            colorSwatch = c(colorSwatch,rep(colorValue,n_replicates))
+            df_density_i$rgb[index_matchI_rows] = colorValue
+            next
+        }
+    }
+    
     #plot the kernel density estimates by replicate with random colors
     x_ax = list(title = "FL2-H")
     y_ax = list(title = "frequency")
-    # f <- list(
-    #   family = "Courier New, monospace",
-    #   size = 18,
-    #   color = "#7f7f7f"
-    # )
-    # x_ax <- list(
-    #   title = "x Axis",
-    #   titlefont = f
-    # )
-    # y_ax <- list(
-    #   title = "y Axis",
-    #   titlefont = f
-    # )
-    fig <- plot_ly(x = ~df_density_i$x, 
-                   y = ~df_density_i$y, 
-                   split = ~df_density_i$sample_rep,
-                   # fill = 'tozeroy',
-                   fill = df_density_i$sample_rep,
-                   # fn = factor(f, levels=unique(f[order(a,b,f)]), ordered=TRUE)
-                   hoverinfo = 'text',
-                   text = ~paste(
-                       '</br> Sample_replicate: ', df_density_i$sample_rep,
-                       '</br> DNA mass (pg): ', df_density_i$DNA_mass_pg,
-                       '</br> Event Count: ', df_density_i$count,
-                       '</br> events/uL: ', df_density_i$events_per_ul
-                   ),
-    ) %>% 
+    
+    fig <- plot_ly() %>% 
+        add_trace(x = ~df_density_i$x, 
+                  y = ~df_density_i$y, 
+                  split = ~df_density_i$sample_rep,
+                  name = ~df_density_i$sample_rep,
+                  color = ~df_density_i$sample_rep,
+                  colors = colorSwatch,
+                  hoverinfo = 'text',
+                  text = ~paste(
+                      '</br> Sample_replicate: ', df_density_i$sample_rep,
+                      '</br> DNA mass (pg): ', df_density_i$DNA_mass_pg,
+                      '</br> Event Count: ', df_density_i$count,
+                      '</br> events/uL: ', df_density_i$events_per_ul
+                  )
+        )%>% 
         layout(xaxis = x_ax,
                yaxis = y_ax)
     
@@ -168,20 +188,19 @@ cleanFlow_0.2 = function(mytable_in,control_ID = "TIA_rep1"){
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
-############    
+    ############    
     sidebarPanel(
-            #Allow user to read in .xlsx file with data to process
-            fileInput('file1', label = 'Select file', accept = c(".xlsx")),
-            # #Provide a button to choose the control sample for DNA mass calculation
-            selectInput('control', label = 'Select control', "Select file above"),
-            # download processed data
-            downloadButton("downloadData", "Download")
-        ),
+        #Allow user to read in .xlsx file with data to process
+        fileInput('file1', label = 'Select file', accept = c(".xlsx")),
+        # #Provide a button to choose the control sample for DNA mass calculation
+        selectInput('control', label = 'Select control', "Select file above"),
+        # download processed data
+        downloadButton("downloadData", "Download")
+    ),
     
     mainPanel(
         fluidRow(
-            column(width = 4),
-            column(width = 8, offset = 0, plotlyOutput(outputId = "ploidyPlot"))
+            column(width = 12, offset = 0, plotlyOutput(outputId = "ploidyPlot"))
         ),
         fluidRow(
             column(width = 12, rHandsontableOutput("database_out"))
@@ -191,22 +210,22 @@ ui <- fluidPage(
 
 
 server <- function(input, output, session) {
-############
+    ############
     
     #This function is responsible for producing the database table and plot, they are stored in a list in that specific order
     cleaned_flow <- reactive({infile = input$file1
-        if(is.null(infile)) {
-            # User has not uploaded a file yet
-            return(NULL)
-        }
-        if(input$control == "Select file above"){
-            fileData = read_excel(infile$datapath, col_names = F)
-            cleanFlow_0.2(fileData)    
-        }
-        else{
-            fileData = read_excel(infile$datapath, col_names = F)
-            cleanFlow_0.2(fileData,input$control)
-        }
+    if(is.null(infile)) {
+        # User has not uploaded a file yet
+        return(NULL)
+    }
+    if(input$control == "Select file above"){
+        fileData = read_excel(infile$datapath, col_names = F)
+        cleanFlow_0.2(fileData)    
+    }
+    else{
+        fileData = read_excel(infile$datapath, col_names = F)
+        cleanFlow_0.2(fileData,input$control)
+    }
     
     })
     # once an input file is present, this allows user to select the sample ID for the control, 
@@ -217,14 +236,14 @@ server <- function(input, output, session) {
                           label = "control",
                           choices = cleaned_flow()[[1]][3],
                           selected = input$control
-                          )
+        )
     })
     
     #database table is captured as output
     output$database_out = renderRHandsontable({
         rhandsontable(cleaned_flow()[[1]]) 
     })
-
+    
     # capture density plot output
     output$ploidyPlot = renderPlotly({cleaned_flow()[[2]]})
     
